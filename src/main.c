@@ -31,97 +31,101 @@ void read_gamepads(void){
 	pad2.release = pad2.prev & (pad2.value ^ pad2.prev);
 }
 
-void wait_noinput(void){
-	while(joy_read(0) || joy_read(1)) px_wait_nmi();
-}
+#pragma bss-name (push, "ZEROPAGE")
+static s8 DROP_X, DROP_Y;
+static u8 DROP_ROT;
 
-static void darken(register const u8* palette, u8 shift){
-	for(idx = 0; idx < 32; idx++){
-		ix = palette[idx];
-		ix -= shift << 4;
-		if(ix > 0x40 || ix == 0x0D) ix = 0x1D;
-		px_buffer_set_color(idx, ix);
-	}
-}
+static s8 *DROP_OFF_X, *DROP_OFF_Y;
+#pragma bss-name (pop)
 
-void fade_from_black(const u8* palette, u8 delay){
-	darken(palette, 4);
-	px_wait_frames(delay);
-	darken(palette, 3);
-	px_wait_frames(delay);
-	darken(palette, 2);
-	px_wait_frames(delay);
-	darken(palette, 1);
-	px_wait_frames(delay);
-	darken(palette, 0);
-}
+typedef struct {
+	s8 off_x[4], off_y[4];
+} RotatedPiece;
 
-void meta_spr(u8 x, u8 y, u8 pal, const u8* data);
-static const u8 META[] = {
-	-8, -8, 0xD0, 0,
-	 0, -8, 0xD1, 0,
-	-8,  0, 0xD2, 0,
-	 0,  0, 0xD3, 0,
-	128,
+static RotatedPiece piece[] = {
+	{{+0, -1, +0, +1}, {+0, +0, +1, +0}},
+	{{+0, +0, +1, +0}, {+0, -1, +0, +1}},
+	{{+0, -1, +0, +1}, {+0, +0, -1, +0}},
+	{{+0, +0, -1, +0}, {+0, -1, +0, +1}},
 };
 
-static void splash_screen(void){
-	register u8 x = 32, y = 32;
-	register s16 sin = 0, cos = 0x3FFF;
+static void sprite_block(s8 x, s8 y){
+	px_spr(16*x + 48, 216 - 16*y - 1, 0, 0x01);
+	px_spr(16*x + 56, 216 - 16*y - 1, 0, 0x01);
+	px_spr(16*x + 48, 208 - 16*y - 1, 0, 0x01);
+	px_spr(16*x + 56, 208 - 16*y - 1, 0, 0x01);
+}
+
+static void sprite_piece(void){
+	sprite_block(DROP_X + DROP_OFF_X[0], DROP_Y + DROP_OFF_Y[0]);
+	sprite_block(DROP_X + DROP_OFF_X[1], DROP_Y + DROP_OFF_Y[1]);
+	sprite_block(DROP_X + DROP_OFF_X[2], DROP_Y + DROP_OFF_Y[2]);
+	sprite_block(DROP_X + DROP_OFF_X[3], DROP_Y + DROP_OFF_Y[3]);
+}
+
+static void set_block(s8 x, s8 y){
+	u8 block[4] = {0x01, 0x01, 0x01, 0x01};
+	px_buffer_blit(NT_ADDR(0, 2*x + 6, 26 - 2*y), block + 0, 2);
+	px_buffer_blit(NT_ADDR(0, 2*x + 6, 27 - 2*y), block + 2, 2);
+}
+
+static void set_piece(void){
+	set_block(DROP_X + DROP_OFF_X[0], DROP_Y + DROP_OFF_Y[0]);
+	set_block(DROP_X + DROP_OFF_X[1], DROP_Y + DROP_OFF_Y[1]);
+	set_block(DROP_X + DROP_OFF_X[2], DROP_Y + DROP_OFF_Y[2]);
+	set_block(DROP_X + DROP_OFF_X[3], DROP_Y + DROP_OFF_Y[3]);
+}
+
+static void tetris_state(void){
+	DROP_X = 5, DROP_Y = 10, DROP_ROT = 0;
 	
 	px_ppu_sync_disable();{
-		// Load the splash tilemap into nametable 0.
+		px_addr(PAL_ADDR);
+		px_blit(32, PALETTE);
+		
 		px_lz4_to_vram(NT_ADDR(0, 0, 0), MAP_SPLASH);
+		// px_addr(NT_ADDR(0, 0, 1));
+		// px_fill(32*30, 0x00);
 	} px_ppu_sync_enable();
-	
-	// music_play(0);
-	
-	fade_from_black(PALETTE, 4);
 	
 	while(true){
 		read_gamepads();
-		if(JOY_LEFT (pad1.value)) x -= 1;
-		if(JOY_RIGHT(pad1.value)) x += 1;
-		if(JOY_DOWN (pad1.value)) y += 1;
-		if(JOY_UP   (pad1.value)) y -= 1;
-		if(JOY_BTN_A(pad1.press)) sound_play(SOUND_JUMP);
+		if(JOY_LEFT (pad1.press)) DROP_X -= 1;
+		if(JOY_RIGHT(pad1.press)) DROP_X += 1;
+		if(JOY_DOWN (pad1.press)) DROP_Y -= 1;
+		if(JOY_UP   (pad1.press)) DROP_Y += 1;
+		if(JOY_BTN_A(pad1.press)) DROP_ROT = (DROP_ROT + 1)&3;
+		if(JOY_BTN_B(pad1.press)) DROP_ROT = (DROP_ROT - 1)&3;
 		
-		// Draw a sprite.
-		meta_spr(x, y, 2, META);
+		DROP_OFF_X = piece[DROP_ROT].off_x;
+		DROP_OFF_Y = piece[DROP_ROT].off_y;
 		
-		PX.scroll_y = 480 + (sin >> 9);
-		sin += cos >> 6;
-		cos -= sin >> 6;
+		if(JOY_START(pad1.press)){
+			set_piece();
+			DROP_X = 5, DROP_Y = 10, DROP_ROT = 0;
+		} else {
+			sprite_piece();
+		}
 		
 		px_spr_end();
 		px_wait_nmi();
 	}
 	
-	splash_screen();
+	tetris_state();
 }
 
 void main(void){
-	// Set up CC65 joystick driver.
+	px_uxrom_select(0);
 	joy_install(nes_stdjoy_joy);
 	
-	// Set which tiles to use for the background and sprites.
+	px_lz4_to_vram(CHR_ADDR(0, 0), CHR0);
 	px_bg_table(0);
 	px_spr_table(0);
 	
-	// Not using bank switching, but a good idea to set a reliable value at boot.
-	px_uxrom_select(0);
-	
-	// Black out the palette.
-	for(idx = 0; idx < 32; idx++) px_buffer_set_color(idx, 0x1D);
-	px_wait_nmi();
-	
-	// Decompress the tileset into character memory.
-	px_lz4_to_vram(CHR_ADDR(0, 0), CHR0);
 	
 	music_init(&MUSIC);
 	sound_init(&SOUNDS);
 	music_play(0);
 	
-	// Jump to the splash screen state.
-	splash_screen();
+	tetris_state();
 }

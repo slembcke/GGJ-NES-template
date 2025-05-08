@@ -64,7 +64,7 @@ $(ROM): ld65.cfg $(OBJS) $(PX_LIB)
 %.s: %.c
 	$(CC) -g $(C65FLAGS) $< --add-source $(INCLUDE) -o $@
 
-%.s %.o: %.c
+%.o: %.c
 	$(CC65_ROOT)/bin/cl65 -c -g $(C65FLAGS) $(INCLUDE) $< -o $@
 
 %.o: %.s
